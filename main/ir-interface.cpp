@@ -3,6 +3,7 @@
 * An user space daemon translating RC codes into Linux input events.
 * Authored by Chen Jie <jie.a.chen@intel.com>
 * Copyright (c) 2011 Intel Corp.
+* Copyright (c) 2012 Brendan Le Foll <brendan@fridu.net>
 *
 * This file is part of meego-tv-IRinterface.
 *
@@ -32,9 +33,13 @@
 #include <map>
 using namespace std;
 
-static int fd;
-static map<int,int> keymap;
+#define DEVICE_NAME "meego-tv-ir"
+#define ID_VENDOR 0x8765
+#define ID_PRODUCT 0x4321
 
+static int fd;
+static int count = 0;
+static map<int,int> keymap;
 
 static int init_map(const char* filename)
 {
@@ -51,7 +56,7 @@ static int init_map(const char* filename)
         char *p;
         int scancode, keycode;
 
-        ///read 1 line
+        //read 1 line
         if (!fgets(line, sizeof(line), f))
             break;
         //skip the leading space(s)
@@ -75,17 +80,17 @@ static int init_map(const char* filename)
 static int lookup_map(int scancode, int &keycode)
 {
     map<int,int>::iterator it;
-    
+
     it = keymap.find(scancode);
     if (it == keymap.end()) {
         return -1;
     }
     keycode = it->second;
-    return 0;
 
+    return 0;
 }
 
-static  INT32 ir_handler( UINT8 cmd, UINT8 length, void* data, void* clientData )
+static INT32 ir_handler(UINT8 cmd, UINT8 length, void* data, void* clientData)
 {
     int scancode,keycode;
     struct input_event event = {0};
@@ -97,9 +102,20 @@ static  INT32 ir_handler( UINT8 cmd, UINT8 length, void* data, void* clientData 
     }
     else
         return 0;
-    
+
+    // The Cocom PIC sends three hex codes for every key press
+    if (!count) {
+        count++;
+    } else if (count > 2) {
+        count = 0;
+        return 0;
+    } else {
+        count++;
+        return 0;
+    }
+
     if (lookup_map(scancode,keycode) < 0) {
-        fprintf(stderr, "unknown scancode %x\n",scancode);
+        fprintf(stderr, "unknown scancode %x\n", scancode);
         return -1;
     }
 
@@ -108,7 +124,7 @@ static  INT32 ir_handler( UINT8 cmd, UINT8 length, void* data, void* clientData 
     event.code  = MSC_SCAN;
     event.value = scancode;
     write(fd, &event, sizeof(event));
- 
+
     gettimeofday(&event.time, NULL);
     event.type  = EV_KEY;
     event.code  = keycode;
@@ -125,13 +141,10 @@ static  INT32 ir_handler( UINT8 cmd, UINT8 length, void* data, void* clientData 
     event.value = 0;
     write(fd, &event, sizeof(event));
 
-
     return 0;
-    
 }
 
-
-int main(int argc,char** argv)
+int main(int argc, char** argv)
 {
     struct uinput_user_dev dev = {0};
 
@@ -149,17 +162,16 @@ int main(int argc,char** argv)
 
     dev.id.version = 1;
     dev.id.bustype = BUS_VIRTUAL;
-    dev.id.vendor = 0x8765;
-    dev.id.product = 0x4321;
-    strncpy(dev.name, "meego-tv-ir", UINPUT_MAX_NAME_SIZE);
+    dev.id.vendor = ID_VENDOR;
+    dev.id.product = ID_PRODUCT;
+    strncpy(dev.name, DEVICE_NAME, UINPUT_MAX_NAME_SIZE);
 
     ioctl(fd, UI_SET_EVBIT, EV_KEY);
     ioctl(fd, UI_SET_EVBIT, EV_MSC);
     write(fd, &dev, sizeof(dev));
-    for (map<int,int>::iterator it=keymap.begin();it!=keymap.end();it++)
+    for (map<int,int>::iterator it=keymap.begin(); it!=keymap.end(); it++)
         ioctl(fd, UI_SET_KEYBIT, it->second);
     ioctl(fd, UI_SET_MSCBIT, MSC_SCAN);
-
 
     if (ioctl(fd, UI_DEV_CREATE)) {
         fprintf(stderr, "unable to create %s\n", dev.name);
