@@ -2,7 +2,7 @@
 * meego-tv-IRinterface.
 * An user space daemon translating RC codes into Linux input events.
 * Authored by Chen Jie <jie.a.chen@intel.com>
-* Copyright (c) 2011 Intel Corp.
+* Copyright (c) 2011, 2012 Intel Corp.
 * Copyright (c) 2012 Brendan Le Foll <brendan@fridu.net>
 *
 * This file is part of meego-tv-IRinterface.
@@ -28,6 +28,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <pal.h>
 #include <linux/uinput.h>
 #include <LR_PICInterface.h>
 #include <map>
@@ -72,7 +73,6 @@ static int init_map(const char* filename)
 
         //add to map
         keymap.insert(pair<int,int>(scancode,keycode));
-
     }
     return 0;
 }
@@ -147,6 +147,10 @@ static INT32 ir_handler(UINT8 cmd, UINT8 length, void* data, void* clientData)
 int main(int argc, char** argv)
 {
     struct uinput_user_dev dev = {0};
+    int retCode;
+    int res = 0;
+    char deviceName[80];
+    LR_PICInterface* pInterface = NULL;
 
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <keymap file>\n", argv[0]);
@@ -169,16 +173,46 @@ int main(int argc, char** argv)
     ioctl(fd, UI_SET_EVBIT, EV_KEY);
     ioctl(fd, UI_SET_EVBIT, EV_MSC);
     write(fd, &dev, sizeof(dev));
-    for (map<int,int>::iterator it=keymap.begin(); it!=keymap.end(); it++)
+
+    for (map<int,int>::iterator it=keymap.begin(); it!=keymap.end(); it++) {
         ioctl(fd, UI_SET_KEYBIT, it->second);
+    }
     ioctl(fd, UI_SET_MSCBIT, MSC_SCAN);
 
     if (ioctl(fd, UI_DEV_CREATE)) {
         fprintf(stderr, "unable to create %s\n", dev.name);
     }
 
-    if (PicInitIR(ir_handler, NULL) != PIC_SUCCESS) {
+    // Recognize platform and configure PIC interface according to device information
+    // Get the platform information to set pic interface
+    pal_soc_info_t soc_info;
+    if((res = pal_get_soc_info(&soc_info)) == 0) {
+        printf("Got the SoC information\n");
+        if(soc_info.name == SOC_NAME_CE3100 || soc_info.name == SOC_NAME_CE4100) {
+            strcpy(deviceName,"/dev/ttyS1");
+        }
+        else if(soc_info.name == SOC_NAME_CE4200 || soc_info.name == SOC_NAME_CE5300) {
+            strcpy(deviceName,"/dev/ttyS2");
+        }
+        else {
+            fprintf(stderr,"%s  Device is not supported\n",soc_info.name);
+            return -1;
+        }
+    } else {
+      fprintf(stderr,"Can't get the SoC information\n");
+      return -1;
+    }
+
+    //Initialize PIC interface for remote controller
+    pInterface = new LR_PICInterface( ir_handler, NULL );
+    if ( pInterface == NULL ) {
         fprintf(stderr, "failed to initialize IR!\n");
+        close(fd);
+        return -1;
+    }
+    retCode = pInterface->Init( (INT8*)(deviceName) );
+    if(retCode != PIC_SUCCESS) {
+        fprintf(stderr, "failed to initialize %s for GVL!\n",deviceName);
         close(fd);
         return -1;
     }

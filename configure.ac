@@ -42,6 +42,7 @@ CPPFLAGS="$CPPFLAGS -I$prefix/include/CE4100/ -I$prefix/include/CE4100/picuart/"
 # Check for libs
 
 AC_CHECK_LIB(osal, os_thread_create, , exit 1, )
+AC_CHECK_LIB(pal, pal_get_soc_info, , exit 1, )
 AC_CHECK_LIB(picuart, PicInitIR, , exit 1,)
 
 
