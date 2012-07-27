@@ -40,6 +40,7 @@ using namespace std;
 
 static int fd;
 static int count = 0;
+static int cocom_bug = 0;
 static map<int,int> keymap;
 
 static int init_map(const char* filename)
@@ -103,15 +104,17 @@ static INT32 ir_handler(UINT8 cmd, UINT8 length, void* data, void* clientData)
     else
         return 0;
 
-    // The Cocom PIC sends three hex codes for every key press
-    if (!count) {
-        count++;
-    } else if (count > 2) {
-        count = 0;
-        return 0;
-    } else {
-        count++;
-        return 0;
+    if (cocom_bug) {
+        // The Cocom CE4100 PIC sends three hex codes for every key press
+        if (!count) {
+            count++;
+        } else if (count > 2) {
+            count = 0;
+            return 0;
+        } else {
+            count++;
+            return 0;
+        }
     }
 
     if (lookup_map(scancode,keycode) < 0) {
@@ -189,31 +192,37 @@ int main(int argc, char** argv)
     if((res = pal_get_soc_info(&soc_info)) == 0) {
         printf("Got the SoC information\n");
         if(soc_info.name == SOC_NAME_CE3100 || soc_info.name == SOC_NAME_CE4100) {
-            strcpy(deviceName,"/dev/ttyS1");
+            if (soc_info.name == SOC_NAME_CE4100) {
+                cocom_bug = 1;
+            }
+            if (PicInitIR(ir_handler, NULL) != PIC_SUCCESS) {
+                fprintf(stderr, "failed to initialize IR for %s!\n", soc_info.name);
+                close(fd);
+                return -1;
+            }
         }
         else if(soc_info.name == SOC_NAME_CE4200 || soc_info.name == SOC_NAME_CE5300) {
-            strcpy(deviceName,"/dev/ttyS2");
+            strcpy(deviceName, "/dev/ttyS2");
+            //Initialize PIC interface for remote controller
+            pInterface = new LR_PICInterface(ir_handler, NULL);
+            if (pInterface == NULL) {
+                fprintf(stderr, "failed to initialize %s IR for %s!\n", deviceName, soc_info.name);
+                close(fd);
+                return -1;
+            }
+            retCode = pInterface->Init((INT8*)(deviceName));
+            if(retCode != PIC_SUCCESS) {
+                fprintf(stderr, "failed to initialize %s for %s\n", soc_info.name, deviceName);
+                close(fd);
+                return -1;
+            }
         }
         else {
-            fprintf(stderr,"%s  Device is not supported\n",soc_info.name);
+            fprintf(stderr, "%s  Device is not supported\n", soc_info.name);
             return -1;
         }
     } else {
-      fprintf(stderr,"Can't get the SoC information\n");
-      return -1;
-    }
-
-    //Initialize PIC interface for remote controller
-    pInterface = new LR_PICInterface( ir_handler, NULL );
-    if ( pInterface == NULL ) {
-        fprintf(stderr, "failed to initialize IR!\n");
-        close(fd);
-        return -1;
-    }
-    retCode = pInterface->Init( (INT8*)(deviceName) );
-    if(retCode != PIC_SUCCESS) {
-        fprintf(stderr, "failed to initialize %s for GVL!\n",deviceName);
-        close(fd);
+        fprintf(stderr, "Can't get the SoC information\n");
         return -1;
     }
 
